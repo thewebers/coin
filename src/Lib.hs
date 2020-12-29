@@ -69,6 +69,9 @@ data Person = Person {
     privateKey :: RSA.PrivateKey
 } deriving (Show)
 
+userAbbrev :: RSA.PublicKey -> String
+userAbbrev pubKey = take 5 (show (RSA.public_n pubKey))
+
 newtype Chain = Chain {
     blocks :: [(Digest SHA512, Block)]
 } deriving (Show)
@@ -169,9 +172,6 @@ createPerson = do
     (pub, priv) <- RSA.generate rsaBitLen rsaPublicKeyExponent
     return $ Person { publicKey = pub, privateKey = priv }
 
--- make `createTransaction` function that takes `src`, `amount`, and `dest`, and
--- it finds transactions in `src`s wallet to back the new transaction
-
 -- Mine
 mine :: Person -> Int32 -> [Transaction] -> Chain -> Chain
 mine person timestamp txs Chain { blocks = blocks' } =
@@ -179,18 +179,17 @@ mine person timestamp txs Chain { blocks = blocks' } =
     in Chain { blocks = aux prevHash 0 : blocks' }
   where
     aux prevHash nonce = let
+      mintTx = Transaction {
+          inputs = [],
+          amount = 1,
+          mainOutput = publicKey person,
+          changeOutput = publicKey person
+      }
       currBlock = Block {
         timestamp = timestamp,
         prevHash = prevHash,
         nonce = nonce,
-        transactions = [
-            Transaction {
-                inputs = [],
-                amount = 1,
-                mainOutput = publicKey person,
-                changeOutput = publicKey person
-            }
-        ]
+        transactions = mintTx : txs
       }
       currHash = hashBlock currBlock
       in
@@ -201,15 +200,8 @@ mine person timestamp txs Chain { blocks = blocks' } =
         -- otherwise, just increment the nonce and try hashing again
         else aux prevHash (nonce + 1)
 
-{-
-for nonce in nonce_candidates:
-    if str(hash(Block { prevHash = prevHash, nonce = nonce, transactions = transactions })).startswith('0' * num_required_zeros):
-        print("we've have mined it")
--}
-
 -- TODO: shouldn't need to convert to string to impl this, because slow
 hasNLeadingZeros :: Digest SHA512 -> Int -> Bool
 hasNLeadingZeros x n =
     let xStr = show x
     in length (takeWhile (== '0') xStr) >= n
-    -- in trace ("numZeros = " ++ show numZeros) (numZeros >= n)
