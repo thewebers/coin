@@ -9,7 +9,10 @@ Assumptions:
 - we use all transactions for user A as inputs to any transaction from A to B
   (including for coin transactions, where A = B), rather than calculating the
   minimum number of transactions required to fulfill the amount being sent
+- people don't own quantum computers yet
 -}
+
+import Control.Exception
 
 import Debug.Trace
 
@@ -55,7 +58,6 @@ data Block = Block {
 } deriving (Show)
 
 data Transaction = Transaction {
-    -- ident :: Int32,
     inputs :: [Transaction],
     amount :: Int32,
     mainOutput :: RSA.PublicKey,
@@ -71,38 +73,67 @@ newtype Chain = Chain {
     blocks :: [(Digest SHA512, Block)]
 } deriving (Show)
 
+emptyChain :: Chain
+emptyChain = Chain { blocks = [] }
+
 data Wallet = Wallet {
     person :: Person,
     unspentTransactions :: [Transaction],
-    walletAmount :: Int
+    walletAmount :: Int32
 } deriving (Show)
 
 getLatestBlock :: Chain -> Block
 getLatestBlock chain = snd $ head $ blocks chain
 
--- getWallet :: Chain -> Person -> Wallet
--- getWallet chain person =
---     let
---         unspentTransactions =
---             filter (\x -> (mainOutput x == publicKey person) || (changeOutput x == publicKey person)) $
---             concatMap (transactions . snd) (blocks chain)
---         walletAmount = foldl (. changeOutput) 0 unspentTransactions
---     in
---         Wallet {
---             person = person,
---             unspentTransactions = unspentTransactions,
---             walletAmount = walletAmount
---         }
+transactionAmount :: Transaction -> RSA.PublicKey -> Int32
+transactionAmount tx person
+    | mainOutput tx == person = amount tx
+    | changeOutput tx == person =
+        sum (map (`transactionAmount` person) $ inputs tx) - amount tx
+    | otherwise = 0
 
--- send :: Chain -> RSA.PublicKey -> RSA.PublicKey -> Rational -> Chain
--- send chain senderPublicKey receiverPublicKey amount =
---     let wallet = getWallet chain
+getWallet :: Chain -> Person -> Wallet
+getWallet chain person =
+    let
+        unspentTransactions = getUnspentTransactions (map snd $ blocks chain) person
+        walletAmount = sum (map (`transactionAmount` publicKey person) unspentTransactions)
+    in
+        Wallet {
+            person = person,
+            unspentTransactions = unspentTransactions,
+            walletAmount = walletAmount
+        }
 
--- hashFromBytestrings :: [ByteString] -> Digest SHA512
--- hashFromByteStrings xs =
---     let ctx = hashInitWith SHA512
---         ctx = hashUpdate ctx ([prevHash block, nonce block] ++ map hashTransaction (transactions block))
---     in hashFinalize ctx
+getUnspentTransactions :: [Block] -> Person -> [Transaction]
+getUnspentTransactions [] person = []
+getUnspentTransactions (b:bs) person =
+    let unspent = getUnspentTransactions bs person
+        involvesPerson t = publicKey person `elem` [mainOutput t, changeOutput t]
+        txs = filter involvesPerson (transactions b)
+        currInputs = concatMap inputs txs
+        -- TODO verify there are no double-spends
+        unspent' = filter (`notElem` currInputs) unspent
+    in unspent' ++ txs
+
+send :: Chain -> Person -> RSA.PublicKey -> Int32 -> Transaction
+send chain sender receiverPublicKey amount =
+    let
+        -- TODO: select enough to satisfy the amount
+        selectedTxs = unspentTransactions $ getWallet chain sender
+        selectedAmount = sum (map (`transactionAmount` publicKey sender) selectedTxs)
+        _ = assert (selectedAmount >= amount) ()
+    in
+        Transaction {
+            inputs = selectedTxs,
+            amount = amount,
+            mainOutput = receiverPublicKey,
+            changeOutput = publicKey sender
+        }
+
+{-
+verify :: Chain -> RSA.PublicKey -> Int -> Int
+-- TODO:  Verify that a given amount has been sent to you?
+-}
 
 hashBlock :: Block -> Digest SHA512
 hashBlock b =
@@ -126,77 +157,20 @@ hashTransaction' t ctx =
 
 hashPubKey' :: RSA.PublicKey -> Context SHA512 -> Context SHA512
 hashPubKey' RSA.PublicKey {RSA.public_size, RSA.public_n, RSA.public_e} ctx =
-    let ctx' = hashUpdate ctx $ LB.toStrict $ encode $ public_size
-        ctx'' = hashUpdate ctx' $ LB.toStrict $ encode $ public_n
-    in hashUpdate ctx'' $ LB.toStrict $ encode $ public_e
-
--- hashPerson' :: Person -> Context SHA512 -> Context SHA512
--- hashPerson' p ctx = hashUpdate ctx $ publicKey p
-    -- let ctx' = hashUpdate ctx $ publicKey p
-    -- in hashUpdate ctx' $ privateKey p
+    let ctx' = hashUpdate ctx $ LB.toStrict $ encode public_size
+        ctx'' = hashUpdate ctx' $ LB.toStrict $ encode public_n
+    in hashUpdate ctx'' $ LB.toStrict $ encode public_e
 
 rsaPublicKeyExponent :: Integer
 rsaPublicKeyExponent = 257
-
--- max :: Ord x => x -> x -> x
--- max a b = if a `le` b then b else a
-
--- class Ord x where
---     le :: x -> x -> Bool
---     ge :: x -> x -> Bool
-
--- instance Ord Double where
---     le a b = a <= b
-
--- instance Ord Float where
---     le a b = a <= b
-
--- data Floop = ...
-
--- ayy :: Floop -> Bool
-
--- id :: a -> a
--- id x = x
-
--- instance Ord Floop where
---     le a b = undefined
-
--- generate :: MonadRandom m => Int -> Integer -> m (PublicKey, PrivateKey)
 
 createPerson :: IO Person
 createPerson = do
     (pub, priv) <- RSA.generate rsaBitLen rsaPublicKeyExponent
     return $ Person { publicKey = pub, privateKey = priv }
 
-mineGenesis :: RSA.PublicKey -> Int32 -> Block
-mineGenesis myPubKey timestamp = mineGenesisAux myPubKey timestamp 0
-
 -- make `createTransaction` function that takes `src`, `amount`, and `dest`, and
 -- it finds transactions in `src`s wallet to back the new transaction
-
-mineGenesisAux :: RSA.PublicKey -> Int32 -> Int32 -> Block
-mineGenesisAux myPubKey timestamp nonce =
-    let currBlock = Block {
-          timestamp = timestamp,
-          prevHash = hashFinalize (hashInitWith SHA512),
-          nonce = nonce,
-          transactions = [
-              Transaction {
-                  inputs = [],
-                  amount = 1,
-                  mainOutput = myPubKey,
-                  changeOutput = myPubKey
-              }]
-        }
-        currHash = hashBlock currBlock
-    in
-        trace ("timestamp = " ++ show timestamp ++ ", nonce = " ++ show nonce ++ ", hash = " ++ show currHash)
-        -- check if has the right number of zeros
-        (if hasNLeadingZeros currHash 2
-        -- if so, that's our block
-        then currBlock
-        -- otherwise, just increment the nonce and try hashing again
-        else mineGenesisAux myPubKey timestamp (nonce + 1))
 
 -- Mine
 mine :: Person -> Int32 -> [Transaction] -> Chain -> Chain
@@ -226,22 +200,6 @@ mine person timestamp txs Chain { blocks = blocks' } =
         then (currHash, currBlock)
         -- otherwise, just increment the nonce and try hashing again
         else aux prevHash (nonce + 1)
-
-
-
-
-
---     let timestamp =
--- mineGenesisAux timestamp nonce =
---     let currBlock = Block { timestamp = timestamp, prevHash = hashFinalize (hashInitWith SHA512), nonce = nonce, transactions = [] }
---         currHash = hashBlock currBlock
-
--- let currBlock = Block {
---     timestamp = timestamp,
---     prevHash = hashFinalize (hashInitWith SHA512),
---     nonce = nonce,
---     transactions = []
--- }
 
 {-
 for nonce in nonce_candidates:
