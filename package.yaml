@@ -1,6 +1,6 @@
 name:                coin
 version:             0.1.0.0
-github:              "githubuser/coin"
+github:              "thewebers/coin"
 license:             BSD3
 author:              "Author name here"
 maintainer:          "example@example.com"
@@ -21,6 +21,8 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- time == 1.9.3
+- cryptonite == 0.27
 
 library:
   source-dirs: src
