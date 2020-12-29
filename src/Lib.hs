@@ -59,12 +59,32 @@ newtype Chain = Chain {
     blocks :: [(Digest SHA512, Block)]
 } deriving (Show)
 
+data Wallet = Wallet {
+    person :: Person,
+    unspentTransactions :: [Transaction],
+    walletAmount :: Int
+} deriving (Show)
+
 getLatestBlock :: Chain -> Block
 getLatestBlock chain = snd $ head $ blocks chain
 
--- TODO:  Crawl through all unspent transactions sent to a given person.
-getWallet :: Person -> [Transaction]
-getWallet person = undefined
+getWallet :: Chain -> Person -> Wallet 
+getWallet chain person =
+    let 
+        unspentTransactions = 
+            filter (\x -> x.output == person.publicKey) $
+            foldl (. transactions) [] (map snd chain.blocks)
+        walletAmount = foldl (. change) 0 unspentTransactions
+    in
+        Wallet {
+            person = person,
+            unspentTransactions = unspentTransactions,
+            walletAmount = walletAmount
+        }
+
+-- send :: Chain -> RSA.PublicKey -> RSA.PublicKey -> Rational -> Chain
+-- send chain senderPublicKey receiverPublicKey amount = 
+--     let wallet = getWallet chain  
 
 -- hashFromBytestrings :: [ByteString] -> Digest SHA512
 -- hashFromByteStrings xs =
@@ -134,28 +154,72 @@ rsaPublicKeyExponent = 257
 createPerson :: IO Person
 createPerson = do
     (pub, priv) <- RSA.generate rsaBitLen rsaPublicKeyExponent
-    -- let ((pub, priv), g1) =
     return $ Person { publicKey = pub, privateKey = priv }
 
-mineGenesis :: Int32 -> Block
-mineGenesis timestamp = mineGenesisAux timestamp 0
+mineGenesis :: RSA.PublicKey -> Int32 -> Block
+mineGenesis myPubKey timestamp = mineGenesisAux myPubKey timestamp 0
 
-mineGenesisAux :: Int32 -> Int32 -> Block
-mineGenesisAux timestamp nonce =
-    let currBlock = Block { timestamp = timestamp, prevHash = hashFinalize (hashInitWith SHA512), nonce = nonce, transactions = [] }
+-- make `createTransaction` function that takes `src`, `amount`, and `dest`, and
+-- it finds transactions in `src`s wallet to back the new transaction
+
+mineGenesisAux :: RSA.PublicKey -> Int32 -> Int32 -> Block
+mineGenesisAux myPubKey timestamp nonce =
+    let currBlock = Block {
+          timestamp = timestamp,
+          prevHash = hashFinalize (hashInitWith SHA512),
+          nonce = nonce,
+          transactions = [
+              Transaction {
+                  inputs = [],
+                  amount = 1,
+                  output = myPubKey,
+                  change = myPubKey
+              }]
+        }
         currHash = hashBlock currBlock
     in
         trace ("timestamp = " ++ show timestamp ++ ", nonce = " ++ show nonce ++ ", hash = " ++ show currHash)
         -- check if has the right number of zeros
-        (if hasNLeadingZeros currHash 4
+        (if hasNLeadingZeros currHash 2
         -- if so, that's our block
         then currBlock
         -- otherwise, just increment the nonce and try hashing again
-        else mineGenesisAux timestamp (nonce + 1))
+        else mineGenesisAux myPubKey timestamp (nonce + 1))
 
 -- Mine
-mine :: [Transaction] -> Chain -> Chain
-mine chain txs = undefined
+mine :: Person -> Int32 -> [Transaction] -> Chain -> Chain
+mine person timestamp txs Chain { blocks = blocks' } =
+    let prevHash = if null blocks' then hashFinalize (hashInitWith SHA512) else fst (head blocks')
+    in trace ("prevHash = " ++ show prevHash) Chain { blocks = aux prevHash 0 : blocks' }
+  where
+    aux prevHash nonce = let
+      currBlock = Block {
+        timestamp = timestamp,
+        prevHash = prevHash,
+        nonce = nonce,
+        transactions = [
+            Transaction {
+                inputs = [],
+                amount = 1,
+                output = publicKey person,
+                change = publicKey person
+            }
+        ]
+      }
+      currHash = hashBlock currBlock
+      in
+        trace ("timestamp = " ++ show timestamp ++ ", nonce = " ++ show nonce ++ ", hash = " ++ show currHash)
+        -- check if has the right number of zeros
+        (if hasNLeadingZeros currHash 1
+        -- if so, that's our block
+        then (currHash, currBlock)
+        -- otherwise, just increment the nonce and try hashing again
+        else aux prevHash (nonce + 1))
+
+
+
+
+
 --     let timestamp =
 -- mineGenesisAux timestamp nonce =
 --     let currBlock = Block { timestamp = timestamp, prevHash = hashFinalize (hashInitWith SHA512), nonce = nonce, transactions = [] }

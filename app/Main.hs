@@ -10,7 +10,31 @@ main :: IO ()
 --   print person
 --   mineGenesis
 
-main = do
+-- Test case:
+-- user A mines one coin
+-- in the next block, A tries to send 2 coins to B
+-- and the transaction is rejected
+
+-- main = do
+--   person <- createPerson
+--   print person
+--   timestamp <- round `fmap` getPOSIXTime
+--   let block = mineGenesis (publicKey person) timestamp
+--   print block
+
+mineLoop :: Person -> Chain -> IO Chain
+mineLoop person chain = do
   timestamp <- round `fmap` getPOSIXTime
-  let block = mineGenesis timestamp
-  print block
+  putStrLn "ayy lmao"
+  let chain = mine person timestamp [] chain
+  print $ length (blocks chain)
+  print $ "hash = " ++ show (head (blocks chain))
+  mineLoop person chain
+
+
+main = do
+  person <- createPerson
+  -- print person
+  -- let block = mine person timestamp []
+  mineLoop person (Chain { blocks = [] })
+  return ()
