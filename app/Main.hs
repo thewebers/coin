@@ -25,11 +25,10 @@ main :: IO ()
 mineLoop :: Person -> Chain -> IO Chain
 mineLoop person chain = do
   timestamp <- round `fmap` getPOSIXTime
-  putStrLn "ayy lmao"
-  let chain = mine person timestamp [] chain
-  print $ length (blocks chain)
-  print $ "hash = " ++ show (head (blocks chain))
-  mineLoop person chain
+  let chain' = mine person timestamp [] chain
+  print $ length (blocks chain')
+  print $ "hash = " ++ show (head (blocks chain'))
+  mineLoop person chain'
 
 
 main = do

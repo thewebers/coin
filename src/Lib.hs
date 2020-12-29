@@ -6,6 +6,9 @@ module Lib where
 Assumptions:
 - each user only ever has one RSA key pair
 - we're not using merkle trees to compress transactions
+- we use all transactions for user A as inputs to any transaction from A to B
+  (including for coin transactions, where A = B), rather than calculating the
+  minimum number of transactions required to fulfill the amount being sent
 -}
 
 import Debug.Trace
@@ -13,11 +16,20 @@ import Debug.Trace
 import Data.Bits ( Bits(xor) )
 import Data.Int ( Int32 )
 import Data.Binary
+
+import Data.List
+
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 
 import qualified Crypto.PubKey.RSA as RSA
 import Crypto.Hash
+    ( hashFinalize,
+      hashInitWith,
+      hashUpdate,
+      SHA512(..),
+      Context,
+      Digest )
 
 -- type Hash = Int32
 -- type Nonce = Int32
@@ -46,9 +58,9 @@ data Transaction = Transaction {
     -- ident :: Int32,
     inputs :: [Transaction],
     amount :: Int32,
-    output :: RSA.PublicKey,
-    change :: RSA.PublicKey
-} deriving (Show)
+    mainOutput :: RSA.PublicKey,
+    changeOutput :: RSA.PublicKey
+} deriving (Show, Eq)
 
 data Person = Person {
     publicKey :: RSA.PublicKey,
@@ -68,23 +80,23 @@ data Wallet = Wallet {
 getLatestBlock :: Chain -> Block
 getLatestBlock chain = snd $ head $ blocks chain
 
-getWallet :: Chain -> Person -> Wallet 
-getWallet chain person =
-    let 
-        unspentTransactions = 
-            filter (\x -> x.output == person.publicKey) $
-            foldl (. transactions) [] (map snd chain.blocks)
-        walletAmount = foldl (. change) 0 unspentTransactions
-    in
-        Wallet {
-            person = person,
-            unspentTransactions = unspentTransactions,
-            walletAmount = walletAmount
-        }
+-- getWallet :: Chain -> Person -> Wallet
+-- getWallet chain person =
+--     let
+--         unspentTransactions =
+--             filter (\x -> (mainOutput x == publicKey person) || (changeOutput x == publicKey person)) $
+--             concatMap (transactions . snd) (blocks chain)
+--         walletAmount = foldl (. changeOutput) 0 unspentTransactions
+--     in
+--         Wallet {
+--             person = person,
+--             unspentTransactions = unspentTransactions,
+--             walletAmount = walletAmount
+--         }
 
 -- send :: Chain -> RSA.PublicKey -> RSA.PublicKey -> Rational -> Chain
--- send chain senderPublicKey receiverPublicKey amount = 
---     let wallet = getWallet chain  
+-- send chain senderPublicKey receiverPublicKey amount =
+--     let wallet = getWallet chain
 
 -- hashFromBytestrings :: [ByteString] -> Digest SHA512
 -- hashFromByteStrings xs =
@@ -108,8 +120,8 @@ hashBlock' block ctx =
 hashTransaction' :: Transaction -> Context SHA512 -> Context SHA512
 hashTransaction' t ctx =
     let ctx' = hashUpdate ctx $ LB.toStrict $ encode $ amount t
-        ctx'' = hashPubKey' (output t) ctx'
-        ctx''' = hashPubKey' (change t) ctx''
+        ctx'' = hashPubKey' (mainOutput t) ctx'
+        ctx''' = hashPubKey' (changeOutput t) ctx''
     in foldl (flip hashTransaction') ctx''' (inputs t)
 
 hashPubKey' :: RSA.PublicKey -> Context SHA512 -> Context SHA512
@@ -172,8 +184,8 @@ mineGenesisAux myPubKey timestamp nonce =
               Transaction {
                   inputs = [],
                   amount = 1,
-                  output = myPubKey,
-                  change = myPubKey
+                  mainOutput = myPubKey,
+                  changeOutput = myPubKey
               }]
         }
         currHash = hashBlock currBlock
@@ -190,7 +202,7 @@ mineGenesisAux myPubKey timestamp nonce =
 mine :: Person -> Int32 -> [Transaction] -> Chain -> Chain
 mine person timestamp txs Chain { blocks = blocks' } =
     let prevHash = if null blocks' then hashFinalize (hashInitWith SHA512) else fst (head blocks')
-    in trace ("prevHash = " ++ show prevHash) Chain { blocks = aux prevHash 0 : blocks' }
+    in Chain { blocks = aux prevHash 0 : blocks' }
   where
     aux prevHash nonce = let
       currBlock = Block {
@@ -201,20 +213,19 @@ mine person timestamp txs Chain { blocks = blocks' } =
             Transaction {
                 inputs = [],
                 amount = 1,
-                output = publicKey person,
-                change = publicKey person
+                mainOutput = publicKey person,
+                changeOutput = publicKey person
             }
         ]
       }
       currHash = hashBlock currBlock
       in
-        trace ("timestamp = " ++ show timestamp ++ ", nonce = " ++ show nonce ++ ", hash = " ++ show currHash)
         -- check if has the right number of zeros
-        (if hasNLeadingZeros currHash 1
+        if hasNLeadingZeros currHash 2
         -- if so, that's our block
         then (currHash, currBlock)
         -- otherwise, just increment the nonce and try hashing again
-        else aux prevHash (nonce + 1))
+        else aux prevHash (nonce + 1)
 
 
 
