@@ -5,10 +5,12 @@ import Data.Time.Clock.POSIX
 import Lib
 
 main :: IO ()
-main = do
-  print createPerson
-
 -- main = do
---   timestamp <- round `fmap` getPOSIXTime
---   let block = mineGenesis timestamp
---   print block
+--   person <- createPerson
+--   print person
+--   mineGenesis
+
+main = do
+  timestamp <- round `fmap` getPOSIXTime
+  let block = mineGenesis timestamp
+  print block
