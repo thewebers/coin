@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NamedFieldPuns, DeriveGeneric #-}
 
 module Lib where
 
@@ -14,13 +14,15 @@ Assumptions:
 
 import Control.Exception
 
+import GHC.Generics
+
 import Debug.Trace
 
+import Data.Binary
 import Data.Bits ( Bits(xor) )
 import Data.Int ( Int32 )
-import Data.Binary
-
 import Data.List
+import qualified Data.Serialize as Cereal
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
@@ -67,7 +69,57 @@ data Transaction = Transaction {
 data Person = Person {
     publicKey :: RSA.PublicKey,
     privateKey :: RSA.PrivateKey
-} deriving (Show)
+} deriving (Show, Generic)
+
+instance Cereal.Serialize Person where
+
+instance Cereal.Serialize RSA.PublicKey where
+    put RSA.PublicKey { RSA.public_size = size, RSA.public_n = n, RSA.public_e = e } =
+        Cereal.put size
+        >> Cereal.put n
+        >> Cereal.put e
+
+    get = do
+        public_size <- Cereal.get
+        public_n <- Cereal.get
+        public_e <- Cereal.get
+        return RSA.PublicKey { RSA.public_size, RSA.public_n, RSA.public_e }
+
+instance Cereal.Serialize RSA.PrivateKey where
+    put RSA.PrivateKey {
+        RSA.private_pub,
+        RSA.private_d,
+        RSA.private_p,
+        RSA.private_q,
+        RSA.private_dP,
+        RSA.private_dQ,
+        RSA.private_qinv
+        } =
+        Cereal.put private_pub
+        >> Cereal.put private_d
+        >> Cereal.put private_p
+        >> Cereal.put private_q
+        >> Cereal.put private_dP
+        >> Cereal.put private_dQ
+        >> Serde.put private_qinv
+
+    get = do
+        private_pub <- Serde.get
+        private_d <- Serde.get
+        private_p <- Serde.get
+        private_q <- Serde.get
+        private_dP <- Serde.get
+        private_dQ <- Serde.get
+        private_qinv <- Serde.get
+        return RSA.PrivateKey {
+                RSA.private_pub,
+                RSA.private_d,
+                RSA.private_p,
+                RSA.private_q,
+                RSA.private_dP,
+                RSA.private_dQ,
+                RSA.private_qinv
+                }
 
 userAbbrev :: RSA.PublicKey -> String
 userAbbrev pubKey = take 5 (show (RSA.public_n pubKey))
