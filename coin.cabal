@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 100e26c159b836f1c9c1137d7136a7a261b3878c6c44cebd3f5d617e9b5d5da8
+-- hash: 72ccb5079ab1eb4c2e4dd5975a6afda2f2b78e7cc17affe1fd33131c1899f91e
 
 name:           coin
 version:        0.1.0.0
@@ -40,6 +40,7 @@ library
     , bytestring ==0.10.10.1
     , cereal ==0.5.8.1
     , cryptonite ==0.27
+    , memory ==0.15.0
     , time ==1.9.3
   default-language: Haskell2010
 
@@ -58,6 +59,7 @@ executable coin-exe
     , cereal ==0.5.8.1
     , coin
     , cryptonite ==0.27
+    , memory ==0.15.0
     , time ==1.9.3
   default-language: Haskell2010
 
@@ -77,5 +79,6 @@ test-suite coin-test
     , cereal ==0.5.8.1
     , coin
     , cryptonite ==0.27
+    , memory ==0.15.0
     , time ==1.9.3
   default-language: Haskell2010

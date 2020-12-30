@@ -27,6 +27,7 @@ dependencies:
 - bytestring == 0.10.10.1
 - HUnit == 1.6.1.0
 - cereal == 0.5.8.1
+- memory == 0.15.0
 
 library:
   source-dirs: src

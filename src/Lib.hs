@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns, DeriveGeneric #-}
+{-# LANGUAGE NamedFieldPuns, DeriveGeneric, FlexibleInstances #-}
 
 module Lib where
 
@@ -24,12 +24,14 @@ import Data.Int ( Int32 )
 import Data.List
 import qualified Data.Serialize as Cereal
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.ByteArray as BA
 
 import qualified Crypto.PubKey.RSA as RSA
 import Crypto.Hash
-    ( hashFinalize,
+    ( digestFromByteString,
+      hashFinalize,
       hashInitWith,
       hashUpdate,
       SHA512(..),
@@ -57,19 +59,23 @@ data Block = Block {
     prevHash :: Digest SHA512,
     nonce :: Int32,
     transactions :: [Transaction]
-} deriving (Show)
+} deriving (Show, Eq, Generic)
+
+instance Cereal.Serialize Block where
 
 data Transaction = Transaction {
     inputs :: [Transaction],
     amount :: Int32,
     mainOutput :: RSA.PublicKey,
     changeOutput :: RSA.PublicKey
-} deriving (Show, Eq)
+} deriving (Show, Eq, Generic)
+
+instance Cereal.Serialize Transaction where
 
 data Person = Person {
     publicKey :: RSA.PublicKey,
     privateKey :: RSA.PrivateKey
-} deriving (Show, Generic)
+} deriving (Show, Eq, Generic)
 
 instance Cereal.Serialize Person where
 
@@ -101,16 +107,16 @@ instance Cereal.Serialize RSA.PrivateKey where
         >> Cereal.put private_q
         >> Cereal.put private_dP
         >> Cereal.put private_dQ
-        >> Serde.put private_qinv
+        >> Cereal.put private_qinv
 
     get = do
-        private_pub <- Serde.get
-        private_d <- Serde.get
-        private_p <- Serde.get
-        private_q <- Serde.get
-        private_dP <- Serde.get
-        private_dQ <- Serde.get
-        private_qinv <- Serde.get
+        private_pub <- Cereal.get
+        private_d <- Cereal.get
+        private_p <- Cereal.get
+        private_q <- Cereal.get
+        private_dP <- Cereal.get
+        private_dQ <- Cereal.get
+        private_qinv <- Cereal.get
         return RSA.PrivateKey {
                 RSA.private_pub,
                 RSA.private_d,
@@ -126,7 +132,20 @@ userAbbrev pubKey = take 5 (show (RSA.public_n pubKey))
 
 newtype Chain = Chain {
     blocks :: [(Digest SHA512, Block)]
-} deriving (Show)
+} deriving (Show, Eq, Generic)
+
+instance Cereal.Serialize Chain where
+
+toByteString :: BA.ByteArrayAccess a => a -> BS.ByteString
+toByteString = BS.pack . BA.unpack
+
+instance Cereal.Serialize (Digest SHA512) where
+    put digest = Cereal.put $ toByteString digest
+    get = do
+        byteStr <- Cereal.get :: Cereal.Get BS.ByteString
+        case digestFromByteString byteStr of
+            Just digest -> return digest
+            Nothing -> fail ""
 
 emptyChain :: Chain
 emptyChain = Chain { blocks = [] }
