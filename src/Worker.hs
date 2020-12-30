@@ -8,10 +8,14 @@ import Lib
 mineSingle :: Person -> [Transaction] -> Chain -> IO Chain
 mineSingle person txs chain = do
   timestamp <- round `fmap` getPOSIXTime
+  unless (transactionsValid txs) $ fail "invalid transactions"
   let chain' = mine person timestamp txs chain
   print $ length (blocks chain')
   print $ "hash = " ++ show (fst $ head (blocks chain'))
   return chain'
+
+transactionsValid :: [Transaction] -> Bool
+transactionsValid txs = snd $ foldl (\(acc, valid) t -> (acc ++ inputs t, valid && all (`notElem` acc) (inputs t))) ([], True) txs
 
 mineNBlocks :: Person -> Chain -> Int -> IO Chain
 mineNBlocks person chain 0 = return chain

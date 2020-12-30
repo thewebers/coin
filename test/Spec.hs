@@ -23,16 +23,16 @@ testMinerReceivesCoins = TestCase $ do
   let wallet = getWallet chain person
   assertEqual "" (walletAmount wallet) 3
 
--- testDoubleSpend = TestCase $ do
---     sender <- createPerson
---     receiver <- createPerson
---     chain <- mineNBlocks sender emptyChain 1
---     let tx = send chain sender (publicKey receiver) 1
---     let result = try (mineSingle sender [tx, tx] chain) :: IO (Either Ex.SomeException Int)
---     case result of
---         Left ex -> putStrLn "nice"
---         Right chain -> error "fuck"
---     return ()
+testDoubleSpend = TestCase $ do
+    sender <- createPerson
+    receiver <- createPerson
+    chain <- mineNBlocks sender emptyChain 1
+    let tx = send chain sender (publicKey receiver) 1
+    result <- try (mineSingle sender [tx, tx] chain) :: IO (Either Ex.SomeException Chain)
+    case result of
+        Left ex -> putStrLn "nice"
+        Right chain -> error "fuck"
+    return ()
 
 testRoundTripPubKeySerialize = TestCase $ do
   person <- createPerson
@@ -57,7 +57,7 @@ testSaveAndLoadChain = TestCase $ do
 
 tests = TestList [
   TestLabel "testMinerReceivesCoins" testMinerReceivesCoins,
-  -- TestLabel "testDoubleSpend" testDoubleSpend,
+  TestLabel "testDoubleSpend" testDoubleSpend,
   TestLabel "testRoundTripPubKeySerialize" testRoundTripPubKeySerialize,
   TestLabel "testSaveAndLoadChain" testSaveAndLoadChain
   ]
