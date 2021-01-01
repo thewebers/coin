@@ -12,7 +12,7 @@ mineSingle person txs chain = do
   timestamp <- round `fmap` getPOSIXTime
   txs' <- filterInvalidTransactions txs chain
   let chain' = mine person timestamp txs' chain
-  print $ length (blocks chain')
+  putStrLn $ "num blocks in chain: " ++ show (length (blocks chain'))
   putStrLn $ "hash = " ++ show (fst $ head (blocks chain'))
   return chain'
 
@@ -21,9 +21,8 @@ filterInvalidTransactions txs chain = aux [] txs
   where
     aux acc [] = return []
     aux acc (tx:txs) = do
-      let allTxs = concatMap (transactions . snd) (blocks chain)
-      let ghostTxs = filter (`notElem` allTxs) (inputs tx)
       let dupInputs = filter (`elem` acc) (inputs tx)
+      let ghostTxs = filter (`notElem` allTransactions chain) (inputs tx)
       if null dupInputs && null ghostTxs
       then do
         txs' <- aux (acc ++ inputs tx) txs
@@ -57,7 +56,8 @@ printTransaction :: Transaction -> IO ()
 printTransaction tx = do
   let srcStr = userAbbrev $ changeOutput tx
   let destStr = userAbbrev $ mainOutput tx
-  putStrLn $ srcStr ++ " -- " ++ show (amount tx) ++ " --> " ++ destStr
+  -- putStrLn $ "[" ++ hash tx ++ "]" ++ srcStr ++ " -- " ++ show (txAmount tx) ++ " --> " ++ destStr
+  putStrLn $ srcStr ++ " -- " ++ show (txAmount tx) ++ " --> " ++ destStr
 
 collectTransactions :: TChan Transaction -> STM [Transaction]
 collectTransactions txChan = do

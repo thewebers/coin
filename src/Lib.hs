@@ -26,10 +26,9 @@ import Data.List
 import qualified Data.Serialize as Cereal
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteArray as BA
+import qualified Data.ByteString.Lazy as LB
 
-import qualified Crypto.PubKey.RSA as RSA
 import Crypto.Hash
     ( digestFromByteString,
       hashFinalize,
@@ -38,9 +37,7 @@ import Crypto.Hash
       SHA512(..),
       Context,
       Digest )
-
--- type Hash = Int32
--- type Nonce = Int32
+import qualified Crypto.PubKey.RSA as RSA
 
 rsaBitLen = 512     -- size of RSA keys
 rsaPrime = 3        -- RSA seed prime (methinks)
@@ -66,7 +63,7 @@ instance Cereal.Serialize Block where
 
 data Transaction = Transaction {
     inputs :: [Transaction],
-    amount :: Int32,
+    txAmount :: Int32,
     mainOutput :: RSA.PublicKey,
     changeOutput :: RSA.PublicKey
 } deriving (Show, Eq, Generic)
@@ -134,7 +131,6 @@ userAbbrev pubKey = take 5 (show (RSA.public_n pubKey))
 newtype Chain = Chain {
     blocks :: [(Digest SHA512, Block)]
 } deriving (Show, Eq, Generic)
-
 instance Cereal.Serialize Chain where
 
 toByteString :: BA.ByteArrayAccess a => a -> BS.ByteString
@@ -157,14 +153,43 @@ data Wallet = Wallet {
     walletAmount :: Int32
 } deriving (Show)
 
+hash :: Hashable a => a -> Digest SHA512
+hash x =
+    let initCtx = hashInitWith SHA512
+        ctx = buildHashCtx x initCtx
+    in hashFinalize ctx
+
+class Hashable a where
+    buildHashCtx :: a -> Context SHA512 -> Context SHA512
+
+instance Hashable Block where
+    buildHashCtx block ctx =
+        let ctx' = hashUpdate ctx $ prevHash block
+            ctx'' = hashUpdate ctx' $ LB.toStrict $ encode $ nonce block
+            ctx''' = hashUpdate ctx'' $ LB.toStrict $ encode $ timestamp block
+        in foldl (flip buildHashCtx) ctx''' (transactions block)
+
+instance Hashable Transaction where
+    buildHashCtx tx ctx =
+        let ctx' = hashUpdate ctx $ LB.toStrict $ encode $ txAmount tx
+            ctx'' = buildHashCtx (mainOutput tx) ctx'
+            ctx''' = buildHashCtx (changeOutput tx) ctx''
+        in foldl (flip buildHashCtx) ctx''' (inputs tx)
+
+instance Hashable RSA.PublicKey where
+    buildHashCtx RSA.PublicKey {RSA.public_size, RSA.public_n, RSA.public_e} ctx =
+        let ctx' = hashUpdate ctx $ LB.toStrict $ encode public_size
+            ctx'' = hashUpdate ctx' $ LB.toStrict $ encode public_n
+        in hashUpdate ctx'' $ LB.toStrict $ encode public_e
+
 getLatestBlock :: Chain -> Block
 getLatestBlock chain = snd $ head $ blocks chain
 
 transactionAmount :: Transaction -> RSA.PublicKey -> Int32
 transactionAmount tx person
-    | mainOutput tx == person = amount tx
+    | mainOutput tx == person = txAmount tx
     | changeOutput tx == person =
-        sum (map (`transactionAmount` person) $ inputs tx) - amount tx
+        sum (map (`transactionAmount` person) $ inputs tx) - txAmount tx
     | otherwise = 0
 
 getWallet :: TVar Chain -> Person -> STM Wallet
@@ -177,6 +202,9 @@ getWallet chainVar person = do
         unspentTransactions = unspentTransactions,
         walletAmount = walletAmount
     }
+
+allTransactions :: Chain -> [Transaction]
+allTransactions chain = concatMap (transactions . snd) (blocks chain)
 
 getUnspentTransactions :: [Block] -> Person -> [Transaction]
 getUnspentTransactions [] person = []
@@ -197,41 +225,10 @@ mkTransaction wallet sender receiverPublicKey amount = do
     let _ = assert (selectedAmount >= amount) ()
     return $ Transaction {
         inputs = selectedTxs,
-        amount = amount,
+        txAmount = amount,
         mainOutput = receiverPublicKey,
         changeOutput = publicKey sender
     }
-
-{-
-verify :: Chain -> RSA.PublicKey -> Int -> Int
--- TODO:  Verify that a given amount has been sent to you?
--}
-
-hashBlock :: Block -> Digest SHA512
-hashBlock b =
-    let ctx = hashInitWith SHA512
-        ctx' = hashBlock' b ctx
-    in hashFinalize ctx'
-
-hashBlock' :: Block -> Context SHA512 -> Context SHA512
-hashBlock' block ctx =
-    let ctx' = hashUpdate ctx $ prevHash block
-        ctx'' = hashUpdate ctx' $ LB.toStrict $ encode $ nonce block
-        ctx''' = hashUpdate ctx'' $ LB.toStrict $ encode $ timestamp block
-    in foldl (flip hashTransaction') ctx''' (transactions block)
-
-hashTransaction' :: Transaction -> Context SHA512 -> Context SHA512
-hashTransaction' t ctx =
-    let ctx' = hashUpdate ctx $ LB.toStrict $ encode $ amount t
-        ctx'' = hashPubKey' (mainOutput t) ctx'
-        ctx''' = hashPubKey' (changeOutput t) ctx''
-    in foldl (flip hashTransaction') ctx''' (inputs t)
-
-hashPubKey' :: RSA.PublicKey -> Context SHA512 -> Context SHA512
-hashPubKey' RSA.PublicKey {RSA.public_size, RSA.public_n, RSA.public_e} ctx =
-    let ctx' = hashUpdate ctx $ LB.toStrict $ encode public_size
-        ctx'' = hashUpdate ctx' $ LB.toStrict $ encode public_n
-    in hashUpdate ctx'' $ LB.toStrict $ encode public_e
 
 rsaPublicKeyExponent :: Integer
 rsaPublicKeyExponent = 257
@@ -250,7 +247,7 @@ mine person timestamp txs Chain { blocks = blocks' } =
     aux prevHash nonce = let
       mintTx = Transaction {
           inputs = [],
-          amount = 1,
+          txAmount = 1,
           mainOutput = publicKey person,
           changeOutput = publicKey person
       }
@@ -260,7 +257,7 @@ mine person timestamp txs Chain { blocks = blocks' } =
         nonce = nonce,
         transactions = mintTx : txs
       }
-      currHash = hashBlock currBlock
+      currHash = hash currBlock
       in
         -- check if has the right number of zeros
         if hasNLeadingZeros currHash 2
