@@ -67,7 +67,7 @@ userThreadArgs (p:ps) =
 
 main = do
   users <- replicateM 2 createPerson
-  -- designate the first user to be a miner as well
+  -- designate the first user to also be a miner
   let miners = [head users]
   chainVar <- atomically emptyChain
   txChan <- atomically newTChan

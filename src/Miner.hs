@@ -10,19 +10,33 @@ import Lib
 mineSingle :: Person -> [Transaction] -> Chain -> IO Chain
 mineSingle person txs chain = do
   timestamp <- round `fmap` getPOSIXTime
-  unless (transactionsValid txs) $ do
-    putStrLn "GOT INVALID TRANSACTION"
-    -- TODO ignore invalid transactions and carry on
-    fail "invalid transactions"
-  let chain' = mine person timestamp txs chain
+  txs' <- filterInvalidTransactions txs chain
+  let chain' = mine person timestamp txs' chain
   print $ length (blocks chain')
   putStrLn $ "hash = " ++ show (fst $ head (blocks chain'))
   return chain'
 
--- TODO check also that the transactions actually exist in the blockchain via
--- unspent transactions given by `getWallet`
-transactionsValid :: [Transaction] -> Bool
-transactionsValid txs = snd $ foldl (\(acc, valid) t -> (acc ++ inputs t, valid && all (`notElem` acc) (inputs t))) ([], True) txs
+filterInvalidTransactions :: [Transaction] -> Chain -> IO [Transaction]
+filterInvalidTransactions txs chain = aux [] txs
+  where
+    aux acc [] = return []
+    aux acc (tx:txs) = do
+      let allTxs = concatMap (transactions . snd) (blocks chain)
+      let ghostTxs = filter (`notElem` allTxs) (inputs tx)
+      let dupInputs = filter (`elem` acc) (inputs tx)
+      if null dupInputs && null ghostTxs
+      then do
+        txs' <- aux (acc ++ inputs tx) txs
+        return $ tx : txs'
+      else do
+        unless (null dupInputs) $ do
+          putStrLn "attempted double-spend(s) with following input transaction(s):"
+          forM_ dupInputs (\tx' -> do { putStr "  "; printTransaction tx' })
+        unless (null ghostTxs) $ do
+          putStrLn "attempted use of following nonexistent transaction(s):"
+          forM_ ghostTxs (\tx' -> do { putStr "  "; printTransaction tx' })
+        aux acc txs
+
 
 mineNBlocks :: Person -> Chain -> Int -> IO Chain
 mineNBlocks person chain 0 = return chain
@@ -64,9 +78,10 @@ minerMain person chainVar txChan = forever $ do
     putStrLn ""
   chain <- readTVarIO chainVar
   chain' <- mineSingle person txs chain
-  atomically $ writeTVar chainVar chain'
   -- TODO need to handle checking if the chain was updated while we were mining
-  -- and see which transactions we still need to commit in the next block
+  -- and see which transactions we still need to commit in the next block.
+  -- don't need to worry about this right now because there's only one miner
+  atomically $ writeTVar chainVar chain'
   threadDelay 1000
   -- tx <- atomically $ readTChan txChan
   -- print tx
