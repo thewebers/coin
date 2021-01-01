@@ -28,7 +28,8 @@ source-repository head
 library
   exposed-modules:
       Lib
-      Worker
+      Miner
+      User
   other-modules:
       Paths_coin
   hs-source-dirs:
@@ -41,6 +42,8 @@ library
     , cereal ==0.5.8.1
     , cryptonite ==0.27
     , memory ==0.15.0
+    , MonadRandom == 0.5.2
+    , stm == 2.5.0.0
     , time ==1.9.3
   default-language: Haskell2010
 
@@ -60,6 +63,8 @@ executable coin-exe
     , coin
     , cryptonite ==0.27
     , memory ==0.15.0
+    , MonadRandom == 0.5.2
+    , stm == 2.5.0.0
     , time ==1.9.3
   default-language: Haskell2010
 

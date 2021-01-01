@@ -1,11 +1,11 @@
 import Test.HUnit
 
-import Control.Exception as Ex 
+import Control.Exception as Ex
 import Control.Monad
 import Data.Time.Clock.POSIX
 
 import Lib
-import Worker
+import Miner
 -- import Main
 
 import qualified Data.Serialize as Cereal
@@ -27,7 +27,7 @@ testDoubleSpend = TestCase $ do
     sender <- createPerson
     receiver <- createPerson
     chain <- mineNBlocks sender emptyChain 1
-    let tx = send chain sender (publicKey receiver) 1
+    let tx = mkTransaction chain sender (publicKey receiver) 1
     result <- try (mineSingle sender [tx, tx] chain) :: IO (Either Ex.SomeException Chain)
     case result of
         Left ex -> putStrLn "nice"

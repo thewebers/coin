@@ -12,6 +12,7 @@ Assumptions:
 - people don't own quantum computers yet
 -}
 
+import Control.Concurrent.STM
 import Control.Exception
 
 import GHC.Generics
@@ -147,8 +148,8 @@ instance Cereal.Serialize (Digest SHA512) where
             Just digest -> return digest
             Nothing -> fail ""
 
-emptyChain :: Chain
-emptyChain = Chain { blocks = [] }
+emptyChain :: STM (TVar Chain)
+emptyChain = newTVar $ Chain { blocks = [] }
 
 data Wallet = Wallet {
     person :: Person,
@@ -166,17 +167,16 @@ transactionAmount tx person
         sum (map (`transactionAmount` person) $ inputs tx) - amount tx
     | otherwise = 0
 
-getWallet :: Chain -> Person -> Wallet
-getWallet chain person =
-    let
-        unspentTransactions = getUnspentTransactions (map snd $ blocks chain) person
-        walletAmount = sum (map (`transactionAmount` publicKey person) unspentTransactions)
-    in
-        Wallet {
-            person = person,
-            unspentTransactions = unspentTransactions,
-            walletAmount = walletAmount
-        }
+getWallet :: TVar Chain -> Person -> STM Wallet
+getWallet chainVar person = do
+    chain <- readTVar chainVar
+    let unspentTransactions = getUnspentTransactions (map snd $ blocks chain) person
+    let walletAmount = sum (map (`transactionAmount` publicKey person) unspentTransactions)
+    return $ Wallet {
+        person = person,
+        unspentTransactions = unspentTransactions,
+        walletAmount = walletAmount
+    }
 
 getUnspentTransactions :: [Block] -> Person -> [Transaction]
 getUnspentTransactions [] person = []
@@ -189,20 +189,18 @@ getUnspentTransactions (b:bs) person =
         unspent' = filter (`notElem` currInputs) unspent
     in unspent' ++ txs
 
-send :: Chain -> Person -> RSA.PublicKey -> Int32 -> Transaction
-send chain sender receiverPublicKey amount =
-    let
-        -- TODO: select enough to satisfy the amount
-        selectedTxs = unspentTransactions $ getWallet chain sender
-        selectedAmount = sum (map (`transactionAmount` publicKey sender) selectedTxs)
-        _ = assert (selectedAmount >= amount) ()
-    in
-        Transaction {
-            inputs = selectedTxs,
-            amount = amount,
-            mainOutput = receiverPublicKey,
-            changeOutput = publicKey sender
-        }
+mkTransaction :: Wallet -> Person -> RSA.PublicKey -> Int32 -> STM Transaction
+mkTransaction wallet sender receiverPublicKey amount = do
+    -- TODO: select just enough transactions to satisfy the amount
+    let selectedTxs = unspentTransactions wallet
+    let selectedAmount = sum (map (`transactionAmount` publicKey sender) selectedTxs)
+    let _ = assert (selectedAmount >= amount) ()
+    return $ Transaction {
+        inputs = selectedTxs,
+        amount = amount,
+        mainOutput = receiverPublicKey,
+        changeOutput = publicKey sender
+    }
 
 {-
 verify :: Chain -> RSA.PublicKey -> Int -> Int
