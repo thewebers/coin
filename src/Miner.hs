@@ -3,17 +3,16 @@ module Miner where
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
-import Data.Time.Clock.POSIX
 
 import Lib
 
 mineSingle :: Person -> [Transaction] -> Chain -> IO Chain
 mineSingle person txs chain = do
-  timestamp <- round `fmap` getPOSIXTime
+  timestamp <- mkTimestamp
   txs' <- filterInvalidTransactions txs chain
   let chain' = mine person timestamp txs' chain
   putStrLn $ "num blocks in chain: " ++ show (length (blocks chain'))
-  putStrLn $ "hash = " ++ show (fst $ head (blocks chain'))
+  -- putStrLn $ "hash = " ++ show (fst $ head (blocks chain'))
   return chain'
 
 filterInvalidTransactions :: [Transaction] -> Chain -> IO [Transaction]
@@ -21,16 +20,26 @@ filterInvalidTransactions txs chain = aux [] txs
   where
     aux acc [] = return []
     aux acc (tx:txs) = do
-      let dupInputs = filter (`elem` acc) (inputs tx)
-      let ghostTxs = filter (`notElem` allTransactions chain) (inputs tx)
+      -- TODO make sure users can't spend other users' transactions
+
+      -- pair the inputs of the transaction `tx` with the spender of the
+      -- transaction (i.e., `txSender tx`), so we can check for
+      -- double-spends and later update the accumulator
+      let userPairedTxs = map (\inputTx -> (txSender tx, inputTx)) $ txInputs tx
+      let dupInputs = filter (`elem` acc) userPairedTxs
+      let ghostTxs = filter (`notElem` allTransactions chain) (txInputs tx)
       if null dupInputs && null ghostTxs
       then do
-        txs' <- aux (acc ++ inputs tx) txs
+        let acc' = acc ++ userPairedTxs
+        txs' <- aux acc' txs
         return $ tx : txs'
       else do
         unless (null dupInputs) $ do
-          putStrLn "attempted double-spend(s) with following input transaction(s):"
-          forM_ dupInputs (\tx' -> do { putStr "  "; printTransaction tx' })
+          putStrLn "attempted double-spend in transaction"
+          putStr "  "
+          printTransaction tx
+          putStrLn "with following double-spent input transaction(s):"
+          forM_ dupInputs (\(_, tx') -> do { putStr "  "; printTransaction tx' })
         unless (null ghostTxs) $ do
           putStrLn "attempted use of following nonexistent transaction(s):"
           forM_ ghostTxs (\tx' -> do { putStr "  "; printTransaction tx' })
@@ -49,15 +58,16 @@ printAllTransactions chain =
   where aux [] = return ()
         aux ((i,b) : bs) = do
           putStrLn $ "block " ++ show i
-          forM_ (transactions b) (\tx -> do { putStr "  "; printTransaction tx })
+          forM_ (blkTransactions b) (\tx -> do { putStr "  "; printTransaction tx })
           aux bs
 
 printTransaction :: Transaction -> IO ()
 printTransaction tx = do
-  let srcStr = userAbbrev $ changeOutput tx
-  let destStr = userAbbrev $ mainOutput tx
-  -- putStrLn $ "[" ++ hash tx ++ "]" ++ srcStr ++ " -- " ++ show (txAmount tx) ++ " --> " ++ destStr
-  putStrLn $ srcStr ++ " -- " ++ show (txAmount tx) ++ " --> " ++ destStr
+  let srcStr = userAbbrev $ txSender tx
+  let destStr = userAbbrev $ txReceiver tx
+  putStrLn $ "[" ++ take 5 (show (hash tx)) ++ "] " ++ srcStr ++ " -- " ++ show (txAmount tx) ++ " --> " ++ destStr
+  putStrLn $ foldl (\acc x ->  acc ++ take 5 (show (hash x)) ++ ", ") "\tinputs: " (txInputs tx)
+  -- putStrLn $ srcStr ++ " -- " ++ show (txAmount tx) ++ " --> " ++ destStr
 
 collectTransactions :: TChan Transaction -> STM [Transaction]
 collectTransactions txChan = do
@@ -70,14 +80,16 @@ collectTransactions txChan = do
 
 minerMain :: Person -> TVar Chain -> TChan Transaction -> IO ()
 minerMain person chainVar txChan = forever $ do
-  txs <- atomically $ collectTransactions txChan
+  (chain, txs) <- atomically $ do
+    chain <- readTVar chainVar
+    txs <- collectTransactions txChan
+    return (chain, txs)
   putStrLn $ "we got " ++ show (length txs) ++ " txs"
-  unless (null txs) $ do
-    putStrLn $ "committing " ++ show (length txs) ++ " transactions"
-    forM_ txs (\tx -> do { putStr "  "; printTransaction tx })
-    putStrLn ""
-  chain <- readTVarIO chainVar
   chain' <- mineSingle person txs chain
+  let committedTxs = blkTransactions . snd . head . blocks $ chain'
+  putStrLn $ "committed " ++ show (length committedTxs) ++ " transactions"
+  forM_ committedTxs (\tx -> do { putStr "  "; printTransaction tx })
+  putStrLn ""
   -- TODO need to handle checking if the chain was updated while we were mining
   -- and see which transactions we still need to commit in the next block.
   -- don't need to worry about this right now because there's only one miner

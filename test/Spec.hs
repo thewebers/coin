@@ -12,22 +12,20 @@ import qualified Data.Serialize as Cereal
 import qualified Data.ByteString as BS
 
 -- TODO testManyMinersDoingSickTricks
-
 -- TODO testInsufficientlyFundedTransactionRejected
-
 -- TODO testMinedBlocksHaveLeadingZeroHash
 
 testMinerReceivesCoins = TestCase $ do
   person <- createPerson
   chain <- mineNBlocks person emptyChain 3
   let wallet = getWallet chain person
-  assertEqual "" (walletAmount wallet) 3
+  assertEqual "" (wltAmount wallet) 3
 
 testDoubleSpend = TestCase $ do
     sender <- createPerson
     receiver <- createPerson
     chain <- mineNBlocks sender emptyChain 1
-    let tx = mkTransaction chain sender (publicKey receiver) 1
+    let tx = mkTransaction chain sender (psnPublicKey receiver) 1
     result <- try (mineSingle sender [tx, tx] chain) :: IO (Either Ex.SomeException Chain)
     case result of
         Left ex -> putStrLn "nice"

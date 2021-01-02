@@ -6,8 +6,7 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Random
-import Data.Time.Clock.POSIX
-import Data.Int ( Int32 )
+import Data.Int ( Int32, Int64 )
 
 import Lib
 import qualified Crypto.PubKey.RSA as RSA
@@ -23,25 +22,23 @@ foreverM x f = do
    foreverM x' f
    return ()
 
--- TODO why are there still double spends
-trySendTo :: Person -> RSA.PublicKey -> Int32 -> [Transaction] -> TVar Chain -> TChan Transaction -> STM [Transaction]
-trySendTo self other amount pendingSends chainVar txChan = do
+trySendTo :: Person -> RSA.PublicKey -> Int32 -> Int64 -> [Transaction] -> TVar Chain -> TChan Transaction -> STM [Transaction]
+trySendTo self other amount timestamp pendingSends chainVar txChan = do
   wallet <- getWallet chainVar self
   -- TODO until we select the minimum number of unspent transactions to fulfill
   -- a send, each transaction will render users unable to send another until
   -- their most recent (and now only unspent) transaction is committed
-  let unspentTxs = unspentTransactions wallet
-  let localUnspentTxs = filter (`notElem` concatMap inputs pendingSends) unspentTxs
-  let localBalance = sum (map (`transactionAmount` publicKey self) localUnspentTxs)
-  -- return $ trace $ "num localUnspentTxs : " ++ show (length localUnspentTxs)
-  -- return $ trace $ "localBalance : " ++ show (localBalance)
-  let wallet' = trace ("[" ++ userAbbrev (publicKey self) ++ "] num unspentTxs : " ++ show (length unspentTxs) ++ "\n  num localUnspentTxs : " ++ show (length localUnspentTxs) ++ "\n  localBalance : " ++ show localBalance) $ Wallet {
-    person = self,
-    unspentTransactions = localUnspentTxs,
-    walletAmount = localBalance
+  let unspentTxs = wltUnspentTransactions wallet
+  let localUnspentTxs = filter (`notElem` concatMap txInputs pendingSends) unspentTxs
+  let localBalance = sum (map (`transactionAmount` psnPublicKey self) localUnspentTxs)
+  -- trace ("[" ++ userAbbrev (psnPublicKey self) ++ "] num unspentTxs : " ++ show (length unspentTxs) ++ "\n  num localUnspentTxs : " ++ show (length localUnspentTxs) ++ "\n  localBalance : " ++ show localBalance) $
+  let wallet' = Wallet {
+    wltPerson = self,
+    wltUnspentTransactions = localUnspentTxs,
+    wltAmount = localBalance
   }
-  when (walletAmount wallet' < amount) retry
-  tx <- mkTransaction wallet' self other amount
+  when (wltAmount wallet' < amount) retry
+  tx <- mkTransaction wallet' self other amount timestamp
   writeTChan txChan tx
   chain <- readTVar chainVar
   -- filter out all sends that have been committed to the blockchain and add
@@ -54,10 +51,11 @@ userMain :: Person -> [RSA.PublicKey] -> TVar Chain -> TChan Transaction -> IO (
 userMain self others chainVar txChan = foreverM [] $ \pendingSends -> do
   threadDelay 1000000
   other <- uniform others
-  putStrLn $ userAbbrev (publicKey self) ++ " trying to send 1 to " ++ userAbbrev other
+  putStrLn $ userAbbrev (psnPublicKey self) ++ " trying to send 1 to " ++ userAbbrev other
+  timestamp <- mkTimestamp
   atomically $ do
     -- first, try to send the amount
-    trySendTo self other 1 pendingSends chainVar txChan
+    trySendTo self other 1 timestamp pendingSends chainVar txChan
     `orElse`
     -- if the transaction fails, the pending sends are unmodified
     return pendingSends

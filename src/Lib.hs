@@ -6,7 +6,7 @@ module Lib where
 Assumptions:
 - each user only ever has one RSA key pair
 - we're not using merkle trees to compress transactions
-- we use all transactions for user A as inputs to any transaction from A to B
+- we use all transactions for user A astxInputs to any transaction from A to B
   (including for coin transactions, where A = B), rather than calculating the
   minimum number of transactions required to fulfill the amount being sent
 - people don't own quantum computers yet
@@ -21,9 +21,11 @@ import Debug.Trace
 
 import Data.Binary
 import Data.Bits ( Bits(xor) )
-import Data.Int ( Int32 )
+import Data.Int ( Int32, Int64 )
 import Data.List
 import qualified Data.Serialize as Cereal
+import Data.Time
+import Data.Time.Clock.POSIX
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteArray as BA
@@ -43,36 +45,39 @@ rsaBitLen = 512     -- size of RSA keys
 rsaPrime = 3        -- RSA seed prime (methinks)
 blockLen = 1000     -- number of transactions in a block
 
-max' :: [Int] -> Int
-max' [x] = x
-max' (x:xs)
-    | max' xs > x = max' xs
-    | otherwise = x
-
-xor' :: [Int32] -> Int32
-xor' = foldl xor 0
+mkTimestamp :: IO Int64
+mkTimestamp = do
+    u <- getCurrentTime
+    return $ floor . (1e9 *) . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds $ u
 
 data Block = Block {
-    timestamp :: Int32,
-    prevHash :: Digest SHA512,
-    nonce :: Int32,
-    transactions :: [Transaction]
+    blkTimestamp :: Int64,
+    blkPrevHash :: Digest SHA512,
+    blkNonce :: Int32,
+    blkTransactions :: [Transaction]
 } deriving (Show, Eq, Generic)
 
 instance Cereal.Serialize Block where
 
 data Transaction = Transaction {
-    inputs :: [Transaction],
+    txTimestamp :: Int64,
+    txInputs :: [Transaction],
     txAmount :: Int32,
-    mainOutput :: RSA.PublicKey,
-    changeOutput :: RSA.PublicKey
+    txMainOutput :: RSA.PublicKey,
+    txChangeOutput :: RSA.PublicKey
 } deriving (Show, Eq, Generic)
+
+txSender :: Transaction -> RSA.PublicKey
+txSender = txChangeOutput
+
+txReceiver :: Transaction -> RSA.PublicKey
+txReceiver = txMainOutput
 
 instance Cereal.Serialize Transaction where
 
 data Person = Person {
-    publicKey :: RSA.PublicKey,
-    privateKey :: RSA.PrivateKey
+    psnPublicKey :: RSA.PublicKey,
+    psnPrivateKey :: RSA.PrivateKey
 } deriving (Show, Eq, Generic)
 
 instance Cereal.Serialize Person where
@@ -148,11 +153,14 @@ emptyChain :: STM (TVar Chain)
 emptyChain = newTVar $ Chain { blocks = [] }
 
 data Wallet = Wallet {
-    person :: Person,
-    unspentTransactions :: [Transaction],
-    walletAmount :: Int32
+    wltPerson :: Person,
+    wltUnspentTransactions :: [Transaction],
+    wltAmount :: Int32
 } deriving (Show)
 
+-- hashBlock :: Block -> Digest SHA512
+-- hash block == hashBlock block
+-- hash transaction
 hash :: Hashable a => a -> Digest SHA512
 hash x =
     let initCtx = hashInitWith SHA512
@@ -164,17 +172,18 @@ class Hashable a where
 
 instance Hashable Block where
     buildHashCtx block ctx =
-        let ctx' = hashUpdate ctx $ prevHash block
-            ctx'' = hashUpdate ctx' $ LB.toStrict $ encode $ nonce block
-            ctx''' = hashUpdate ctx'' $ LB.toStrict $ encode $ timestamp block
-        in foldl (flip buildHashCtx) ctx''' (transactions block)
+        let ctx' = hashUpdate ctx $ blkPrevHash block
+            ctx'' = hashUpdate ctx' $ LB.toStrict $ encode $ blkNonce block
+            ctx''' = hashUpdate ctx'' $ LB.toStrict $ encode $ blkTimestamp block
+        in foldl (flip buildHashCtx) ctx''' (blkTransactions block)
 
 instance Hashable Transaction where
     buildHashCtx tx ctx =
-        let ctx' = hashUpdate ctx $ LB.toStrict $ encode $ txAmount tx
-            ctx'' = buildHashCtx (mainOutput tx) ctx'
-            ctx''' = buildHashCtx (changeOutput tx) ctx''
-        in foldl (flip buildHashCtx) ctx''' (inputs tx)
+        let ctx' = hashUpdate ctx $ LB.toStrict $ encode $ txTimestamp tx
+            ctx'' = hashUpdate ctx' $ LB.toStrict $ encode $ txAmount tx
+            ctx''' = buildHashCtx (txMainOutput tx) ctx''
+            ctx'''' = buildHashCtx (txChangeOutput tx) ctx'''
+        in foldl (flip buildHashCtx) ctx'''' (txInputs tx)
 
 instance Hashable RSA.PublicKey where
     buildHashCtx RSA.PublicKey {RSA.public_size, RSA.public_n, RSA.public_e} ctx =
@@ -187,47 +196,48 @@ getLatestBlock chain = snd $ head $ blocks chain
 
 transactionAmount :: Transaction -> RSA.PublicKey -> Int32
 transactionAmount tx person
-    | mainOutput tx == person = txAmount tx
-    | changeOutput tx == person =
-        sum (map (`transactionAmount` person) $ inputs tx) - txAmount tx
+    | txMainOutput tx == person = txAmount tx
+    | txChangeOutput tx == person =
+        sum (map (`transactionAmount` person) $ txInputs tx) - txAmount tx
     | otherwise = 0
 
 getWallet :: TVar Chain -> Person -> STM Wallet
 getWallet chainVar person = do
     chain <- readTVar chainVar
     let unspentTransactions = getUnspentTransactions (map snd $ blocks chain) person
-    let walletAmount = sum (map (`transactionAmount` publicKey person) unspentTransactions)
+    let wltAmount = sum (map (`transactionAmount` psnPublicKey person) unspentTransactions)
     return $ Wallet {
-        person = person,
-        unspentTransactions = unspentTransactions,
-        walletAmount = walletAmount
+        wltPerson = person,
+        wltUnspentTransactions = unspentTransactions,
+        wltAmount = wltAmount
     }
 
 allTransactions :: Chain -> [Transaction]
-allTransactions chain = concatMap (transactions . snd) (blocks chain)
+allTransactions chain = concatMap (blkTransactions . snd) (blocks chain)
 
 getUnspentTransactions :: [Block] -> Person -> [Transaction]
 getUnspentTransactions [] person = []
 getUnspentTransactions (b:bs) person =
     let unspent = getUnspentTransactions bs person
-        involvesPerson t = publicKey person `elem` [mainOutput t, changeOutput t]
-        txs = filter involvesPerson (transactions b)
-        currInputs = concatMap inputs txs
+        involvesPerson t = psnPublicKey person `elem` [txMainOutput t, txChangeOutput t]
+        txs = filter involvesPerson (blkTransactions b)
+        currInputs = concatMap txInputs txs
         -- TODO verify there are no double-spends
         unspent' = filter (`notElem` currInputs) unspent
     in unspent' ++ txs
 
-mkTransaction :: Wallet -> Person -> RSA.PublicKey -> Int32 -> STM Transaction
-mkTransaction wallet sender receiverPublicKey amount = do
+mkTransaction :: Wallet -> Person -> RSA.PublicKey -> Int32 -> Int64 -> STM Transaction
+mkTransaction wallet sender receiverPublicKey amount timestamp = do
     -- TODO: select just enough transactions to satisfy the amount
-    let selectedTxs = unspentTransactions wallet
-    let selectedAmount = sum (map (`transactionAmount` publicKey sender) selectedTxs)
+    let selectedTxs = wltUnspentTransactions wallet
+    let selectedAmount = sum (map (`transactionAmount` psnPublicKey sender) selectedTxs)
     let _ = assert (selectedAmount >= amount) ()
     return $ Transaction {
-        inputs = selectedTxs,
+        txTimestamp = timestamp,
+        txInputs = selectedTxs,
         txAmount = amount,
-        mainOutput = receiverPublicKey,
-        changeOutput = publicKey sender
+        txMainOutput = receiverPublicKey,
+        txChangeOutput = psnPublicKey sender
     }
 
 rsaPublicKeyExponent :: Integer
@@ -236,26 +246,27 @@ rsaPublicKeyExponent = 257
 createPerson :: IO Person
 createPerson = do
     (pub, priv) <- RSA.generate rsaBitLen rsaPublicKeyExponent
-    return $ Person { publicKey = pub, privateKey = priv }
+    return $ Person { psnPublicKey = pub, psnPrivateKey = priv }
 
 -- Mine
-mine :: Person -> Int32 -> [Transaction] -> Chain -> Chain
+mine :: Person -> Int64 -> [Transaction] -> Chain -> Chain
 mine person timestamp txs Chain { blocks = blocks' } =
     let prevHash = if null blocks' then hashFinalize (hashInitWith SHA512) else fst (head blocks')
     in Chain { blocks = aux prevHash 0 : blocks' }
   where
     aux prevHash nonce = let
       mintTx = Transaction {
-          inputs = [],
+          txTimestamp = timestamp,
+          txInputs = [],
           txAmount = 1,
-          mainOutput = publicKey person,
-          changeOutput = publicKey person
+          txMainOutput = psnPublicKey person,
+          txChangeOutput = psnPublicKey person
       }
       currBlock = Block {
-        timestamp = timestamp,
-        prevHash = prevHash,
-        nonce = nonce,
-        transactions = mintTx : txs
+        blkTimestamp = timestamp,
+        blkPrevHash = prevHash,
+        blkNonce = nonce,
+        blkTransactions = mintTx : txs
       }
       currHash = hash currBlock
       in

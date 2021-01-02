@@ -27,7 +27,7 @@ main :: IO ()
 --   person <- createPerson
 --   print person
 --   timestamp <- round `fmap` getPOSIXTime
---   let block = mineGenesis (publicKey person) timestamp
+--   let block = mineGenesis (psnPublicKey person) timestamp
 --   print block
 
 -- mineLoop :: Person -> Chain -> IO Chain
@@ -42,7 +42,7 @@ main :: IO ()
 --   personA <- createPerson
 --   personB <- createPerson
 --   chain <- mineNBlocks personA emptyChain 10
---   let tx = send chain personA (publicKey personB) 5
+--   let tx = send chain personA (psnPublicKey personB) 5
 --   chain' <- mineSingle personA [tx] chain
 --   printAllTransactions chain'
 --   -- print $ transactions $ snd $ head $ blocks chain'
@@ -63,7 +63,7 @@ stores only the public keys of other users.
 userThreadArgs :: [Person] -> [(Person, [RSA.PublicKey])]
 userThreadArgs [] = []
 userThreadArgs (p:ps) =
-  (p, (map publicKey ps)) : map (\(p', ks) -> (p', (publicKey p) : ks)) (userThreadArgs ps)
+  (p, (map psnPublicKey ps)) : map (\(p', ks) -> (p', (psnPublicKey p) : ks)) (userThreadArgs ps)
 
 main = do
   users <- replicateM 2 createPerson
