@@ -18,22 +18,23 @@ import qualified Data.ByteString as BS
 -- TODO testInsufficientlyFundedTransactionRejected
 -- TODO testMinedBlocksHaveLeadingZeroHash
 
-
 testMineManyInTime = TestCase $ do
   let chainThresh = 10000
   sender <- createPerson
   receiver <- createPerson
-  startTime <- mkTimestamp
-  chain <- atomically emptyChain
-  -- chain' <- atomically $ readTVar $ chain
+  tChain <- atomically emptyChain
 
-  -- Repeat some shit
-  take 10 $ iterate (\_ -> do
-    let tx = mkTransaction chain sender (psnPublicKey receiver) 1
-    chain''' <- mineSingle sender [tx] chain
-    -- TODO
-    return ()
-  ) 0
+  startTime <- mkTimestamp
+
+  replicateM_ 100 $ do
+    timestamp <- mkTimestamp
+    (tx, chain) <- atomically $ do
+      wallet <- getWallet tChain sender
+      tx <- mkTransaction wallet sender (psnPublicKey receiver) 1 timestamp
+      chain <- readTVar tChain
+      return (tx, chain)
+    chain' <- mineSingle sender [tx] chain
+    atomically $ writeTVar tChain chain'
 
   endTime <- mkTimestamp
   let duration = fromIntegral (endTime - startTime) / 1e9
