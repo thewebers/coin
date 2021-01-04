@@ -248,7 +248,9 @@ createPerson = do
     (pub, priv) <- RSA.generate rsaBitLen rsaPublicKeyExponent
     return $ Person { psnPublicKey = pub, psnPrivateKey = priv }
 
--- Mine
+-- TODO keep a penultimate hash ctx with everything except the `nonce` in it,
+-- then each leading zero check only needs to update the penultimate ctx with
+-- the new nonce, rather than rehashing everything in each recursive call
 mine :: Person -> Int64 -> [Transaction] -> Chain -> Chain
 mine person timestamp txs Chain { blocks = blocks' } =
     let prevHash = if null blocks' then hashFinalize (hashInitWith SHA512) else fst (head blocks')

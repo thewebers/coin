@@ -25,7 +25,7 @@ testMineManyInTime = TestCase $ do
   receiver <- createPerson
   startTime <- mkTimestamp
   chain <- atomically emptyChain
-  chain' <- atomically $ readTVar $ chain 
+  -- chain' <- atomically $ readTVar $ chain
 
   -- Repeat some shit
   take 10 $ iterate (\_ -> do
@@ -39,7 +39,7 @@ testMineManyInTime = TestCase $ do
   let duration = fromIntegral (endTime - startTime) / 1e9
 
   -- TODO assert time less than duration
-  putStrLn $ "Duration: " ++ show duration
+  putStrLn $ "Duration: " ++ show duration ++ "s"
 
 -- testMinerReceivesCoins = TestCase $ do
 --   person <- createPerson
