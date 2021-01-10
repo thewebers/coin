@@ -25,7 +25,7 @@ testMineManyInTime = TestCase $ do
   receiver <- createPerson
   startTime <- mkTimestamp
   chain <- atomically emptyChain
-  chain' <- atomically $ readTVar $ chain 
+  -- chain' <- atomically $ readTVar $ chain
 
   -- Repeat some shit
   take 10 $ iterate (\_ -> do

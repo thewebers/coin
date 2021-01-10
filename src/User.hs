@@ -16,6 +16,9 @@ verify :: Chain -> RSA.PublicKey -> Int -> Int
 -- TODO:  Verify that a given amount has been sent to you?
 -}
 
+foldWhile :: (a -> Bool) -> [a] -> [a]
+foldWhile acc cond iter = Nothing
+
 foreverM :: Monad m => b -> (b -> m b) -> m ()
 foreverM x f = do
    x' <- f x
@@ -38,6 +41,12 @@ trySendTo self other amount timestamp pendingSends chainVar txChan = do
     wltAmount = localBalance
   }
   when (wltAmount wallet' < amount) retry
+
+  -- TODO tx binning to prevent fan-in, then move to the miner code to check 
+  --      if the user can create the tx in the first place. 
+
+  let incomingTransactions = takeWhile \tx -> 
+
   tx <- mkTransaction wallet' self other amount timestamp
   writeTChan txChan tx
   chain <- readTVar chainVar
