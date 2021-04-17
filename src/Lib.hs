@@ -61,6 +61,13 @@ mkTimestamp = do
     u <- getCurrentTime
     return $ floor . (1e9 *) . nominalDiffTimeToSeconds . utcTimeToPOSIXSeconds $ u
 
+-- TODO:  Make this not retarded.
+--        We're trying to fold until the transactions sum to amount X.
+foldWhile :: [a] -> ([a] -> a -> Bool) -> [a] -> [a]
+foldWhile cond iter = foldl (\x acc -> if cond acc x then acc : x else acc) [] iter
+getTransactionsToAmount :: [Transaction] -> Integer -> [Transaction]
+getTransactionsToAmount txs amount = foldWhile (\x acc -> length acc >= amount) txs
+
 data Block = Block {
     blkTimestamp :: Int64,
     blkPrevHash :: Digest SHA512,
@@ -239,7 +246,12 @@ getUnspentTransactions (b:bs) person =
 
 mkTransaction :: Wallet -> Person -> RSA.PublicKey -> Int32 -> Int64 -> STM Transaction
 mkTransaction wallet sender receiverPublicKey amount timestamp = do
-    -- TODO: select just enough transactions to satisfy the amount
+
+    -- TODO:  select just enough transactions to satisfy the amount
+    -- TODO:  ensure that all transactions belong to you (if it's sent to you or you have change)
+
+    -- TODO foldwhile
+
     let selectedTxs = wltUnspentTransactions wallet
     let selectedAmount = sum (map (`transactionAmount` psnPublicKey sender) selectedTxs)
     let _ = assert (selectedAmount >= amount) ()
